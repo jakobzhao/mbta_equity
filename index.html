@@ -322,12 +322,22 @@ function renderScatter(varname) {
 
 function updateAll(varname) {
   currentVar = varname;
-  if (map.getLayer('tracts-fill')) {
-    map.setPaintProperty('tracts-fill', 'fill-color', tractColorExpr(varname));
+  try {
+    if (map.getLayer('tracts-fill')) {
+      map.setPaintProperty('tracts-fill', 'fill-color', tractColorExpr(varname));
+    }
+    renderLegend(varname);
+  } catch (e) { console.error('legend:', e); }
+  try { renderHeadline(varname); }
+  catch (e) {
+    console.error('headline:', e);
+    document.getElementById('headline').innerHTML = '<div style="color:#dc2626;font-size:12px">Headline error: ' + e.message + '</div>';
   }
-  renderLegend(varname);
-  renderHeadline(varname);
-  renderScatter(varname);
+  try { renderScatter(varname); }
+  catch (e) {
+    console.error('scatter:', e);
+    document.getElementById('scatter').innerHTML = '<div style="color:#dc2626;font-size:12px;padding:12px">Scatter error: ' + e.message + '</div>';
+  }
 }
 
 document.getElementById('var').addEventListener('change', e => updateAll(e.target.value));
