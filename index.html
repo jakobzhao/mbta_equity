@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>MBTA Bus Reliability × Neighborhood Demographics — Boston Metro</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root {
+    --fg: #1a1a1a;
+    --muted: #6b7280;
+    --bg: #fafafa;
+    --panel: #ffffff;
+    --border: #e5e7eb;
+    --accent: #2563eb;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--fg); background: var(--bg); }
+  body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  header { padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 16px; margin: 0 0 2px 0; font-weight: 600; }
+  header .sub { font-size: 12px; color: var(--muted); }
+  header .sub a { color: var(--accent); text-decoration: none; }
+  main { flex: 1; display: grid; grid-template-columns: 1.5fr 1fr; min-height: 0; }
+  #map { height: 100%; }
+  .side { display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--panel); min-height: 0; }
+  .controls { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .controls label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; font-weight: 500; }
+  .controls select { width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; background: white; }
+  .headline { padding: 12px 14px; border-bottom: 1px solid var(--border); background: #f9fafb; }
+  .headline .row { display: flex; gap: 10px; margin-bottom: 6px; }
+  .headline .stat { flex: 1; background: white; border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
+  .headline .stat .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+  .headline .stat .value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .headline .stat .unit { font-size: 11px; color: var(--muted); margin-left: 3px; }
+  .headline .finding { font-size: 12px; color: var(--fg); line-height: 1.5; margin-top: 6px; padding: 8px 10px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 2px; }
+  #scatter { flex: 1; min-height: 0; }
+  .legend { position: absolute; bottom: 18px; left: 12px; background: rgba(255,255,255,0.95); padding: 8px 10px; border-radius: 4px; border: 1px solid var(--border); font-size: 11px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); max-width: 220px; }
+  .legend .title { font-weight: 600; margin-bottom: 4px; }
+  .legend .ramp { display: flex; height: 10px; border-radius: 2px; overflow: hidden; margin: 3px 0; }
+  .legend .ramp div { flex: 1; }
+  .legend .ticks { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; }
+  .legend .row { display: flex; align-items: center; gap: 5px; margin-top: 3px; }
+  .legend .swatch { width: 14px; height: 3px; border-radius: 1px; }
+  .popup { font-size: 12px; }
+  .popup b { font-size: 13px; }
+  footer { padding: 6px 14px; font-size: 11px; color: var(--muted); background: var(--panel); border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<header>
+  <h1>MBTA Bus Reliability × Neighborhood Demographics</h1>
+  <div class="sub">Boston metro · routes colored by on-time performance · tracts shaded by selected demographic · Sep–Nov 2025 · <a href="#" id="about-link">about this demo →</a></div>
+</header>
+<main>
+  <div style="position: relative;">
+    <div id="map"></div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <aside class="side">
+    <div class="controls">
+      <label for="var">Tract demographic layer</label>
+      <select id="var">
+        <option value="median_income">Median household income (ACS 2022)</option>
+        <option value="pct_no_car">% zero-vehicle households</option>
+        <option value="pct_bipoc">% non-white / non-Hispanic</option>
+      </select>
+    </div>
+    <div class="headline" id="headline"></div>
+    <div id="scatter"></div>
+  </aside>
+</main>
+<footer>
+  Data: MBTA Reliability (MassDOT ArcGIS) · MBTA GTFS · US Census ACS 5-year 2022 · TIGER 2022 cartographic boundaries. Reliability metric = Headway / Schedule Adherence on-time count ÷ scheduled count, aggregated Sep 1 – Nov 29 2025, weighted by trip volume. Tract-level OTP = ridership-weighted average across routes serving stops in the tract. This is a <b>demo</b> — methodology can be tightened.
+</footer>
+
+<script>
+// ===== Config =====
+const VARS = {
+  median_income: { label: 'Median household income', unit: '$', fmt: v => '$' + v.toLocaleString(), logScale: false, hiBad: false, xTitle: 'Median household income ($)' },
+  pct_no_car:    { label: '% zero-vehicle HH',       unit: '%', fmt: v => v.toFixed(1) + '%',      logScale: false, hiBad: false, xTitle: '% zero-vehicle households' },
+  pct_bipoc:     { label: '% BIPOC',                 unit: '%', fmt: v => v.toFixed(1) + '%',      logScale: false, hiBad: false, xTitle: '% non-white / non-Hispanic' },
+};
+
+// Viridis-ish gradient for tract (sequential), RdYlGn for reliability
+const TRACT_RAMP = ['#440154','#3b528b','#21918c','#5ec962','#fde725'];
+const REL_RAMP = ['#d73027','#fc8d59','#fee08b','#d9ef8b','#91cf60','#1a9850'];
+
+// ===== Map =====
+const map = new maplibregl.Map({
+  container: 'map',
+  style: {
+    version: 8,
+    sources: {
+      osm: {
+        type: 'raster',
+        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        attribution: '© OpenStreetMap contributors'
+      }
+    },
+    layers: [{ id: 'osm', type: 'raster', source: 'osm', paint: { 'raster-opacity': 0.6, 'raster-saturation': -0.5 } }]
+  },
+  center: [-71.06, 42.35],
+  zoom: 10.5
+});
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+
+let summary, routesGJ, tractsGJ, currentVar = 'median_income';
+
+Promise.all([
+  fetch('data/summary.json').then(r => r.json()),
+  fetch('data/routes.geojson').then(r => r.json()),
+  fetch('data/tracts.geojson').then(r => r.json()),
+]).then(([s, r, t]) => {
+  summary = s; routesGJ = r; tractsGJ = t;
+  map.on('load', onMapReady);
+  if (map.loaded()) onMapReady();
+});
+
+function onMapReady() {
+  map.addSource('tracts', { type: 'geojson', data: tractsGJ });
+  map.addSource('routes', { type: 'geojson', data: routesGJ });
+
+  map.addLayer({
+    id: 'tracts-fill',
+    type: 'fill',
+    source: 'tracts',
+    paint: {
+      'fill-color': tractColorExpr('median_income'),
+      'fill-opacity': 0.55
+    }
+  }, 'osm');
+
+  map.moveLayer('tracts-fill'); // ensure above OSM
+
+  map.addLayer({
+    id: 'tracts-outline',
+    type: 'line',
+    source: 'tracts',
+    paint: { 'line-color': '#ffffff', 'line-width': 0.3, 'line-opacity': 0.5 }
+  });
+
+  map.addLayer({
+    id: 'routes-line',
+    type: 'line',
+    source: 'routes',
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': reliabilityColorExpr(),
+      'line-width': ['interpolate', ['linear'], ['zoom'], 9, 1.2, 13, 3.5],
+      'line-opacity': 0.9
+    }
+  });
+
+  // Hover popups
+  const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'popup' });
+
+  map.on('mousemove', 'routes-line', e => {
+    if (!e.features.length) return;
+    const f = e.features[0];
+    const p = f.properties;
+    map.getCanvas().style.cursor = 'pointer';
+    popup.setLngLat(e.lngLat)
+      .setHTML(`<b>Route ${p.short_name || p.route_id}</b><br>${p.long_name || ''}<br>OTP: ${(p.otp*100).toFixed(1)}%<br>${p.den.toLocaleString()} trips`)
+      .addTo(map);
+  });
+  map.on('mouseleave', 'routes-line', () => { map.getCanvas().style.cursor = ''; popup.remove(); });
+
+  map.on('mousemove', 'tracts-fill', e => {
+    if (!e.features.length) return;
+    const f = e.features[0];
+    const p = f.properties;
+    map.getCanvas().style.cursor = 'pointer';
+    const otpTxt = (p.tract_otp != null && !isNaN(p.tract_otp)) ? (p.tract_otp*100).toFixed(1)+'%' : '—';
+    const incTxt = (p.median_income != null && !isNaN(p.median_income)) ? '$'+Number(p.median_income).toLocaleString() : '—';
+    const nocarTxt = (p.pct_no_car != null && !isNaN(p.pct_no_car)) ? Number(p.pct_no_car).toFixed(1)+'%' : '—';
+    const bipocTxt = (p.pct_bipoc != null && !isNaN(p.pct_bipoc)) ? Number(p.pct_bipoc).toFixed(1)+'%' : '—';
+    popup.setLngLat(e.lngLat)
+      .setHTML(`<b>Tract ${p.GEOID}</b><br>Median income: ${incTxt}<br>% no-car: ${nocarTxt}<br>% BIPOC: ${bipocTxt}<br>Tract OTP (weighted): ${otpTxt}`)
+      .addTo(map);
+  });
+  map.on('mouseleave', 'tracts-fill', () => { map.getCanvas().style.cursor = ''; popup.remove(); });
+
+  updateAll('median_income');
+}
+
+function tractRange(varname) {
+  const vals = tractsGJ.features.map(f => f.properties[varname]).filter(v => v != null && !isNaN(v));
+  vals.sort((a,b) => a-b);
+  const q = p => vals[Math.floor(p * (vals.length-1))];
+  return { min: vals[0], max: vals[vals.length-1], q10: q(0.1), q25: q(0.25), q50: q(0.5), q75: q(0.75), q90: q(0.9) };
+}
+
+function tractColorExpr(varname) {
+  const r = tractRange(varname);
+  return [
+    'case',
+    ['==', ['get', varname], null], '#e5e7eb',
+    ['interpolate', ['linear'], ['get', varname],
+      r.q10, TRACT_RAMP[0],
+      r.q25, TRACT_RAMP[1],
+      r.q50, TRACT_RAMP[2],
+      r.q75, TRACT_RAMP[3],
+      r.q90, TRACT_RAMP[4]
+    ]
+  ];
+}
+
+function reliabilityColorExpr() {
+  return ['interpolate', ['linear'], ['get', 'otp'],
+    0.45, REL_RAMP[0],
+    0.55, REL_RAMP[1],
+    0.62, REL_RAMP[2],
+    0.70, REL_RAMP[3],
+    0.78, REL_RAMP[4],
+    0.85, REL_RAMP[5]
+  ];
+}
+
+function renderLegend(varname) {
+  const r = tractRange(varname);
+  const V = VARS[varname];
+  const tractGrad = `linear-gradient(to right, ${TRACT_RAMP.join(',')})`;
+  const relGrad = `linear-gradient(to right, ${REL_RAMP.join(',')})`;
+  document.getElementById('legend').innerHTML = `
+    <div class="title">Tract: ${V.label}</div>
+    <div class="ramp" style="background:${tractGrad}"></div>
+    <div class="ticks"><span>${V.fmt(r.q10)}</span><span>${V.fmt(r.q50)}</span><span>${V.fmt(r.q90)}</span></div>
+    <div class="title" style="margin-top:8px">Bus routes: On-time %</div>
+    <div class="ramp" style="background:${relGrad}"></div>
+    <div class="ticks"><span>45%</span><span>65%</span><span>85%</span></div>
+  `;
+}
+
+function renderHeadline(varname) {
+  const V = VARS[varname];
+  const key = varname === 'median_income' ? 'corr_income' :
+              varname === 'pct_no_car'    ? 'corr_no_car'  :
+                                             'corr_bipoc';
+  const r = summary[key];
+  const q = summary.quartile_otp;
+  const qKeys = Object.keys(q);
+  const q1 = q[qKeys[0]], q4 = q[qKeys[qKeys.length-1]];
+  const diff = (q1 - q4) * 100;
+  const rAbs = Math.abs(r);
+  const rStrength = rAbs < 0.15 ? 'weak' : rAbs < 0.35 ? 'moderate' : 'strong';
+  const rSign = r > 0 ? 'positive' : 'negative';
+  const signEmoji = r > 0 ? '↑' : '↓';
+
+  let finding = '';
+  if (varname === 'median_income') {
+    finding = `Surprise: Pearson r = ${r.toFixed(2)} — <b>lower-income tracts have slightly <i>better</i> on-time performance</b> than higher-income tracts. This flips the naive hypothesis. Likely because MBTA prioritizes Key Bus Routes serving dense low-income urban cores (Roxbury, Dorchester, Chelsea) post-BNRD. <b>OTP ≠ accessibility</b> — the real equity question may lie in frequency and realized travel time, not punctuality.`;
+  } else if (varname === 'pct_no_car') {
+    finding = `r = +${r.toFixed(2)} — tracts with more zero-car households get <b>modestly better</b> OTP. Captive riders are served by the most-prioritized routes. Again, this says little about <i>whether the service itself is adequate</i>.`;
+  } else {
+    finding = `r = +${r.toFixed(2)} — modestly higher OTP in higher-BIPOC tracts, consistent with Key Bus Route prioritization. Not a sufficient equity metric on its own.`;
+  }
+
+  document.getElementById('headline').innerHTML = `
+    <div class="row">
+      <div class="stat"><div class="label">Q1 ${V.label} tracts</div><div class="value">${(q1*100).toFixed(1)}<span class="unit">% OTP</span></div></div>
+      <div class="stat"><div class="label">Q4 ${V.label} tracts</div><div class="value">${(q4*100).toFixed(1)}<span class="unit">% OTP</span></div></div>
+      <div class="stat"><div class="label">Pearson r</div><div class="value">${r>=0?'+':''}${r.toFixed(2)}<span class="unit">${rStrength}</span></div></div>
+    </div>
+    <div class="finding">${finding}</div>
+  `;
+}
+
+function renderScatter(varname) {
+  const V = VARS[varname];
+  const pts = tractsGJ.features
+    .map(f => f.properties)
+    .filter(p => p.tract_otp != null && p[varname] != null && !isNaN(p.tract_otp) && !isNaN(p[varname]));
+  const x = pts.map(p => Number(p[varname]));
+  const y = pts.map(p => Number(p.tract_otp) * 100);
+  const text = pts.map(p => `Tract ${p.GEOID}<br>${V.label}: ${V.fmt(Number(p[varname]))}<br>OTP: ${(p.tract_otp*100).toFixed(1)}%`);
+
+  // OLS fit
+  const n = x.length;
+  const mx = x.reduce((a,b)=>a+b,0)/n;
+  const my = y.reduce((a,b)=>a+b,0)/n;
+  let num=0, den=0;
+  for (let i=0; i<n; i++){ num += (x[i]-mx)*(y[i]-my); den += (x[i]-mx)**2; }
+  const slope = num/den, intercept = my - slope*mx;
+  const xMin = Math.min(...x), xMax = Math.max(...x);
+  const lineX = [xMin, xMax];
+  const lineY = lineX.map(v => slope*v + intercept);
+
+  const data = [
+    {
+      x, y, text,
+      type: 'scatter', mode: 'markers',
+      marker: { size: 5, color: '#2563eb', opacity: 0.4, line: { width: 0 } },
+      hovertemplate: '%{text}<extra></extra>',
+      name: 'Tracts'
+    },
+    {
+      x: lineX, y: lineY,
+      type: 'scatter', mode: 'lines',
+      line: { color: '#dc2626', width: 2, dash: 'solid' },
+      name: 'OLS',
+      hoverinfo: 'skip'
+    }
+  ];
+  const layout = {
+    margin: { l: 46, r: 14, t: 30, b: 40 },
+    title: { text: `${V.label} vs. tract OTP (n=${n})`, font: { size: 13 }, x: 0.02, xanchor: 'left' },
+    xaxis: { title: { text: V.xTitle, font: { size: 11 } }, tickfont: { size: 10 } },
+    yaxis: { title: { text: 'Tract OTP (%)', font: { size: 11 } }, tickfont: { size: 10 }, range: [45, 90] },
+    showlegend: false,
+    plot_bgcolor: '#fafafa',
+    paper_bgcolor: '#ffffff'
+  };
+  Plotly.react('scatter', data, layout, { displayModeBar: false, responsive: true });
+}
+
+function updateAll(varname) {
+  currentVar = varname;
+  if (map.getLayer('tracts-fill')) {
+    map.setPaintProperty('tracts-fill', 'fill-color', tractColorExpr(varname));
+  }
+  renderLegend(varname);
+  renderHeadline(varname);
+  renderScatter(varname);
+}
+
+document.getElementById('var').addEventListener('change', e => updateAll(e.target.value));
+
+document.getElementById('about-link').addEventListener('click', e => {
+  e.preventDefault();
+  alert(`What this shows:\n\n• 142 MBTA bus routes, colored by official on-time performance (OTP), Sep–Nov 2025.\n• 853 census tracts in 4 MA counties (Suffolk, Middlesex, Norfolk, Essex), shaded by the selected ACS demographic.\n• Scatter plot: tract-level ridership-weighted OTP vs. demographic, with OLS fit.\n\nSurprising finding:\n\nThe correlation between income and reliability is weakly NEGATIVE (r≈-0.15), and reliability is slightly HIGHER in tracts with more zero-car households and BIPOC residents. This runs counter to the naive "equity" hypothesis.\n\nThis is a good pedagogical moment: OTP measures punctuality, not accessibility. The next step is to build a network model, compute realized travel times, and ask the equity question at the level of "what can a resident actually reach in 30 minutes?" — not "is the bus on time?"\n\nStack: MapLibre GL + Plotly + pure static GeoJSON. No backend.`);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+{
+  "n_tracts": 730,
+  "n_routes": 142,
+  "n_dac": 126,
+  "period": "2025-09-01 to 2025-11-29",
+  "correlations": {
+    "income_vs_otp": -0.1488,
+    "income_vs_trips": -0.1925,
+    "income_vs_span": -0.2018,
+    "income_vs_long_commute": -0.2079,
+    "income_vs_job_access": -0.2221,
+    "nocar_vs_otp": 0.3853,
+    "nocar_vs_trips": 0.1589,
+    "nocar_vs_long_commute": -0.1972,
+    "nocar_vs_job_access": 0.5469,
+    "bipoc_vs_otp": 0.2295,
+    "bipoc_vs_long_commute": 0.173
+  },
+  "dac_comparison": {
+    "otp": {
+      "dac": 0.6707,
+      "non_dac": 0.6469
+    },
+    "weekday_trips": {
+      "dac": 967.125,
+      "non_dac": 575.2115
+    },
+    "mean_span_h": {
+      "dac": 18.4693,
+      "non_dac": 17.1651
+    },
+    "pct_long_commute": {
+      "dac": 14.5407,
+      "non_dac": 12.0492
+    },
+    "jobs_direct_ride": {
+      "dac": 170212.8992,
+      "non_dac": 126023.6963
+    },
+    "median_income": {
+      "dac": 65891.7561,
+      "non_dac": 129257.2947
+    }
+  }
+}
