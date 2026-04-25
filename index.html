@@ -116,8 +116,7 @@ Promise.all([
   fetch('data/tracts.geojson').then(r => r.json()),
 ]).then(([s, r, t]) => {
   summary = s; routesGJ = r; tractsGJ = t;
-  map.on('load', onMapReady);
-  if (map.loaded()) onMapReady();
+  if (map.loaded()) onMapReady(); else map.on('load', onMapReady);
 });
 
 function onMapReady() {
@@ -132,9 +131,7 @@ function onMapReady() {
       'fill-color': tractColorExpr('median_income'),
       'fill-opacity': 0.55
     }
-  }, 'osm');
-
-  map.moveLayer('tracts-fill'); // ensure above OSM
+  });
 
   map.addLayer({
     id: 'tracts-outline',
@@ -237,18 +234,24 @@ function renderLegend(varname) {
 
 function renderHeadline(varname) {
   const V = VARS[varname];
-  const key = varname === 'median_income' ? 'corr_income' :
-              varname === 'pct_no_car'    ? 'corr_no_car'  :
-                                             'corr_bipoc';
-  const r = summary[key];
-  const q = summary.quartile_otp;
-  const qKeys = Object.keys(q);
-  const q1 = q[qKeys[0]], q4 = q[qKeys[qKeys.length-1]];
-  const diff = (q1 - q4) * 100;
+  // Compute Pearson r and quartile means directly from tracts GeoJSON so this page
+  // is decoupled from summary.json schema changes.
+  const pts = tractsGJ.features
+    .map(f => f.properties)
+    .filter(p => p.tract_otp != null && p[varname] != null && !isNaN(p.tract_otp) && !isNaN(p[varname]))
+    .map(p => ({ x: Number(p[varname]), y: Number(p.tract_otp) }));
+  const n = pts.length;
+  const mx = pts.reduce((s,p)=>s+p.x,0)/n, my = pts.reduce((s,p)=>s+p.y,0)/n;
+  let sxy=0, sxx=0, syy=0;
+  pts.forEach(p => { const dx=p.x-mx, dy=p.y-my; sxy+=dx*dy; sxx+=dx*dx; syy+=dy*dy; });
+  const r = sxy / Math.sqrt(sxx*syy);
+
+  const sorted = pts.slice().sort((a,b) => a.x - b.x);
+  const q1 = sorted.slice(0, Math.floor(n/4)).reduce((s,p)=>s+p.y,0) / Math.floor(n/4);
+  const q4 = sorted.slice(-Math.floor(n/4)).reduce((s,p)=>s+p.y,0) / Math.floor(n/4);
+
   const rAbs = Math.abs(r);
   const rStrength = rAbs < 0.15 ? 'weak' : rAbs < 0.35 ? 'moderate' : 'strong';
-  const rSign = r > 0 ? 'positive' : 'negative';
-  const signEmoji = r > 0 ? '↑' : '↓';
 
   let finding = '';
   if (varname === 'median_income') {
